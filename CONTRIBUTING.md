@@ -1,20 +1,22 @@
-# Contribuer à Leonida-free
+# Contributing to Leonida-free
 
-Proposez une correction, une documentation ou un test via une branche et une demande de fusion. Aucune participation financière n’est requise. Expliquez le problème, le comportement attendu et le résultat réellement observé ; pour une régression, joignez si possible un cas synthétique.
+To contribute a fix, documentation, or a test, make your changes on a branch and open a pull request. No payment is required. Describe the problem, what you expected, and what you actually observed. For a regression, include a synthetic test case if possible.
 
-1. Avant de modifier le code, reproduisez le comportement sur une entrée créée pour le test. N’utilisez pas de fichiers du jeu ni de SDK propriétaire dans un exemple.
-2. Faites un changement ciblé. Ajoutez un test et conservez la provenance, la licence et les notices de tout travail repris. Distinguez toujours une validation CPU d’une observation GPU ou d’une image effectivement présentée.
-3. Depuis la racine, exécutez le test concerné. Par exemple, sans jeu ni GPU :
+Use English for issues, pull requests, and public announcements so contributors can follow the discussion.
+
+1. Before changing the code, reproduce the behavior with an input created for the test. Do not use game files or a proprietary SDK in an example.
+2. Keep the change focused and add a test. Preserve the attribution, licenses, and notices for any work you reuse. Distinguish a CPU validation result from behavior observed on a GPU or a frame actually shown on screen.
+3. Run the relevant test from the repository root. For example, these tests need neither the game nor a GPU:
    ```sh
    python -I -B tests/test_dds_png.py
    python -I -B tests/test_dds_png_dx10.py
    ```
-4. Après avoir ajouté explicitement les fichiers prévus à l’index Git, contrôlez ce qui sera publié :
+4. Stage only the files you intend to publish, then check them:
    ```sh
    git diff --cached --stat
    git diff --cached --check
    python -I scripts/check_no_game_data.py
    ```
-   Ce dernier contrôle reconnaît des formats, pas la licence ou l’origine des fichiers. Vérifiez aussi manuellement les fichiers texte, les droits de redistribution et les informations sensibles.
+   The last check recognizes file formats; it cannot establish a file’s license or origin. Review text files manually, verify redistribution rights, and check for sensitive information.
 
-Ne joignez jamais de binaire du jeu, d’archive, de contenu extrait ou traduit depuis le jeu, de capture du jeu, de clés, de jetons, de chemins personnels, de journaux de session ni de SDK propriétaire. Préférez des compteurs agrégés et des fixtures synthétiques dont vous avez les droits.
+Do not attach game binaries, archives, content extracted or translated from the game, screenshots of the game, keys, tokens, personal file paths, session logs, or proprietary SDKs. Share aggregate counts and synthetic test fixtures that you have the right to distribute instead.
