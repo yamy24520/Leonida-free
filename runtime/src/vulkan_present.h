@@ -25,6 +25,7 @@
 // and a present that asks for it is queued in that mode alone. Without the extension, or without either mode, a
 // request is ignored and the frame waits for the vblank.
 
+#include "present_queue_trace.h"
 #include "vulkan_backend.h"
 #include "vulkan_present_compose.h"
 
@@ -576,7 +577,8 @@ private:
             // Commit/rollback happened before releasing tracker_mutex_ inside submit_mutex(), preserving submission
             // order without holding tracker_mutex_ across vkQueuePresentKHR.
             if (tracker_lock.owns_lock()) tracker_lock.unlock();
-            if (submitted == VK_SUCCESS) result = vkQueuePresentKHR_(queue_, &present);
+            if (submitted == VK_SUCCESS)
+                result = queue_trace_.call(image, [&] { return vkQueuePresentKHR_(queue_, &present); });
         }
         if (submitted != VK_SUCCESS) return give_back(frame, submitted);
         ++frame_index_;
@@ -1261,6 +1263,7 @@ private:
         if (swapchain) vkDestroySwapchainKHR_(device, swapchain, nullptr);
     }
 
+    PresentQueueTrace queue_trace_{PresentQueueTrace::Source::presenter};
     VulkanContext& context_;
     VkInstance instance_;
     VkPhysicalDevice physical_;
