@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 
+#include "../src/present_queue_trace.h"
 #include "../src/vulkan_backend.h"
 
 #include <algorithm>
@@ -212,7 +213,7 @@ public:
         pi.pSwapchains = &swapchain_;
         pi.pImageIndices = &image_index;
         std::lock_guard lock(submit_mutex_);
-        const VkResult r = fn_.queue_present(queue_, &pi);
+        const VkResult r = queue_trace_.call(image_index, [&] { return fn_.queue_present(queue_, &pi); });
         return r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR;
     }
 
@@ -571,6 +572,7 @@ private:
         return true;
     }
 
+    PresentQueueTrace queue_trace_{PresentQueueTrace::Source::dxgi};
     SwapchainFunctions fn_{};
     bool loaded_ = false;
     VkInstance instance_ = VK_NULL_HANDLE;
