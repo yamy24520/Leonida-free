@@ -79,7 +79,8 @@ class Observations:
         self.queues = {}
         self.counts = dict(requests=0, draw_completed=0, copy_completed=0, present_accepted=0, candidates=0,
                            inconsistent=0, sequence_gaps=0, presenter_overflow=0, queue_calls=0,
-                           queue_returns=0, queue_accepted=0, queue_failed=0, queue_unmatched_returns=0,
+                           queue_returns=0, queue_accepted=0, queue_success=0, queue_suboptimal=0,
+                           queue_failed=0, queue_unmatched_returns=0,
                            queue_overflow=0)
 
     def record_queue(self, kind, f):
@@ -108,7 +109,12 @@ class Observations:
             return
         self.queues[key] = (n, None)
         self.counts["queue_returns"] += 1
-        self.counts["queue_accepted" if f[b"raw"] in ACCEPTED_RESULTS else "queue_failed"] += 1
+        result = f[b"raw"]
+        if result in ACCEPTED_RESULTS:
+            self.counts["queue_accepted"] += 1
+            self.counts["queue_success" if result == 0 else "queue_suboptimal"] += 1
+        else:
+            self.counts["queue_failed"] += 1
 
     def record(self, kind, f):
         self.seen = True

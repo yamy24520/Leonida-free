@@ -559,6 +559,8 @@ if(BUILD_TESTING)
     add_executable(present_queue_trace_fixture test/present_queue_trace_fixture.cpp)
     add_test(NAME present_queue_trace COMMAND "${Python3_EXECUTABLE}" -I
       "${CMAKE_CURRENT_SOURCE_DIR}/test/check_present_queue_trace.py" "$<TARGET_FILE:present_queue_trace_fixture>")
+    add_test(NAME present_queue_reader_contract COMMAND "${Python3_EXECUTABLE}" -I
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/check_present_queue_reader.py" "$<TARGET_FILE:present_queue_trace_fixture>")
   endif()
 
   add_executable(retire_tickets_test test/retire_tickets_test.cpp)

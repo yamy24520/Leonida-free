@@ -38,6 +38,7 @@ class NativeQueueObservations(unittest.TestCase):
                 out = scan(marker(), marker("RETURN", raw=raw))
                 self.assertEqual(out["status"], "queue_accepted" if ok else "queue_failed")
                 self.assertEqual((out["queue_returns"], out["queue_accepted"], out["queue_failed"]), (1, int(ok), int(not ok)))
+                self.assertEqual((out["queue_success"], out["queue_suboptimal"]), (int(raw == 0), int(raw == 1000001003)))
                 self.assert_no_image_evidence(out)
 
     def test_mismatch_each_key_dimension_then_valid_pair(self):

@@ -43,7 +43,7 @@ FRAMEPROOF PRESENT pid=42 id=7 n=1 image=0 mode=planes draw_target=1 copy_done=1
 
 ### Native queue profile (opt-in)
 
-This separate producer profile can diagnose a call that did not return. It is not present in the uninstrumented base, and does not require WINDOW, ACTIVE, DRAW, or PRESENT records. Example (invented):
+This separate producer profile can help identify a call for which no return was observed. At this revision, the [opt-in runtime probe](../runtime/present-queue-trace.md) emits these two native markers when `LEONIDA_PRESENT_QUEUE_TRACE=1` is set before process startup. It does **not** emit WINDOW, ACTIVE, DRAW, or PRESENT; those require separate instrumentation. Example (invented):
 
 ```text
 FRAMEPROOF QUEUE_CALL pid=42 source=dxgi id=7 n=1 image=2
@@ -55,7 +55,7 @@ Use a single process lifetime per input, not concatenated sessions that might re
 The reader keeps one pending call per object and source. Duplicates, old sequences, mismatched images and orphan returns never create a successful pair. A newer call supersedes any pending call for that object. A mismatched return does not consume a matching call still in flight. At most 256 distinct queue objects are tracked separately from the presenter-ID budget. Check `inconsistent`, `sequence_gaps`, `queue_unmatched_returns` and `queue_overflow`.
 
 - `queue_calls` counts observed calls; `queue_returns` counts matched returns. `queue_unreturned` is their difference, not proof of a hang: input may be incomplete.
-- `queue_accepted` counts only matched results 0 and 1000001003 (`VK_SUCCESS` and `VK_SUBOPTIMAL_KHR`); other matched results increment `queue_failed`.
+- `queue_accepted` is the sum of `queue_success` (0, `VK_SUCCESS`) and `queue_suboptimal` (1000001003, `VK_SUBOPTIMAL_KHR`). Other matched results increment `queue_failed`. These counters count matched returns only.
 - Do **not** add `queue_accepted` and `present_accepted`: the native and higher-level probes can observe the same presentation. Neither native marker counts as a draw, copy or image candidate. The top-level status reports the strongest observation anywhere in the scanned input, not the outcome of the last call.
 
 **Limits and privacy.** At most 4 MiB, 4,096 bytes per record (excluding its line ending), and 256 presenter IDs per attribution mode. Oversize records are skipped in bounded chunks. If the scanned prefix ends mid-line, including at ordinary EOF, the line is never interpreted; `unterminated` is 1 and `truncated` is true. At the byte cap even an exactly full input is marked `truncated`. Check those flags plus `overlong`, `presenter_overflow`, `sequence_gaps`, `malformed` and `inconsistent` before interpreting totals. Only counts, flags, a status, and the caller-supplied PID are output. No log text, paths, handles, or image data are emitted. The tool never uploads a log.
