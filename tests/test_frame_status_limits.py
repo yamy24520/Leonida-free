@@ -26,6 +26,26 @@ def summary(data, single=False):
 
 
 class BoundsAndAttribution(unittest.TestCase):
+    def test_draw_accepts_extra_diagnostic_fields_and_rejects_impossible_completion(self):
+        row = b"FRAMEPROOF DRAW extra=private submitted=1 done=1 pid=42\n"
+        result = summary(row + row.replace(b"submitted=1", b"submitted=0"))
+        self.assertEqual((result["draw_completed"], result["copy_completed"], result["inconsistent"]), (1, 0, 1))
+        self.assertEqual(result["status"], "gpu_complete")
+        self.assertNotIn("private", repr(result))
+
+    def test_anonymous_draw_before_window_is_not_backfilled(self):
+        row = b"FRAMEPROOF DRAW submitted=1 done=1\n"
+        self.assertEqual(summary(row + WINDOW, True)["gpu_complete"], 0)
+        self.assertEqual(summary(row + WINDOW + row, True)["gpu_complete"], 1)
+        self.assertEqual(summary(WINDOW + row + WINDOW.replace(b"42", b"12"), True)["gpu_complete"], 0)
+
+    def test_unterminated_draw_at_eof_is_ignored_regular_crlf_is_accepted(self):
+        row = b"FRAMEPROOF DRAW submitted=1 done=1 pid=42"
+        for ending in (b"", b"\r"):
+            result = summary(row + ending)
+            self.assertEqual((result["draw_completed"], result["unterminated"], result["truncated"]), (0, 1, True))
+        self.assertEqual(summary(row + b"\r\n")["gpu_complete"], 1)
+
     def test_single_process_requires_window_then_discards_unattributed_on_foreign_pid(self):
         self.assertEqual(summary(ACTIVE + REQUEST + PRESENT, True)["requests"], 0)
         trace = WINDOW + ACTIVE + REQUEST + PRESENT

@@ -13,11 +13,12 @@ UINT32 = (1 << 32) - 1
 SCHEMAS = {
     b"WINDOW": (b"title", b"visible"),
     b"ACTIVE": (b"id", b"capture"),
+    b"DRAW": (b"submitted", b"done"),
     b"REQUEST": (b"id", b"n", b"mode"),
     b"PRESENT": (b"id", b"n", b"image", b"mode", b"draw_target", b"copy_done", b"raw",
                  b"pixels", b"diff", b"postdraw", b"varied"),
 }
-FLAGS = {b"visible", b"capture", b"draw_target", b"copy_done"}
+FLAGS = {b"visible", b"capture", b"draw_target", b"copy_done", b"submitted", b"done"}
 LIMITS = {b"id": (1, UINT32), b"n": (1, UINT32), b"image": (0, UINT32),
           b"raw": (-(1 << 31), (1 << 31) - 1), b"pixels": (0, (1 << 63) - 1),
           b"diff": (-1, (1 << 63) - 1), b"postdraw": (-1, (1 << 63) - 1), b"varied": (-1, 1)}
@@ -43,7 +44,11 @@ def fields(words):
 
 
 def validated(kind, items):
-    if set(items) != set(SCHEMAS[kind]):
+    required = set(SCHEMAS[kind])
+    if kind == b"DRAW" and required <= items.keys():
+        # Draw producers may add diagnostics; neither retain nor output them.
+        items = {k: items[k] for k in required}
+    if set(items) != required:
         raise ValueError
     for key, token in items.items():
         if key in FLAGS:
@@ -59,13 +64,19 @@ class Observations:
     def __init__(self):
         self.seen = self.window = False
         self.presenters = {}
-        self.counts = dict(requests=0, gpu_complete=0, present_accepted=0, candidates=0,
+        self.counts = dict(requests=0, draw_completed=0, copy_completed=0, present_accepted=0, candidates=0,
                            inconsistent=0, sequence_gaps=0, presenter_overflow=0)
 
     def record(self, kind, f):
         self.seen = True
         if kind == b"WINDOW":
             self.window = f[b"title"] == b"sgaWindowClass" and f[b"visible"] == 1
+            return
+        if kind == b"DRAW":
+            if f[b"done"] and not f[b"submitted"]:
+                self.counts["inconsistent"] += 1
+            elif f[b"done"] and f[b"submitted"]:
+                self.counts["draw_completed"] += 1
             return
         ident = f[b"id"]
         if ident not in self.presenters:
@@ -95,7 +106,7 @@ class Observations:
             return
         done = f[b"copy_done"] == 1
         accepted = f[b"raw"] in (0, 1000001003)  # VK_SUCCESS / VK_SUBOPTIMAL_KHR
-        self.counts["gpu_complete"] += int(done)
+        self.counts["copy_completed"] += int(done)
         self.counts["present_accepted"] += int(accepted)
         pixels, diff, post, varied = (f[k] for k in (b"pixels", b"diff", b"postdraw", b"varied"))
         if max(diff, post) > pixels or (varied == 1 and pixels < 2) or (
@@ -108,7 +119,8 @@ class Observations:
 
     def status(self):
         for key, label in (("candidates", "candidate_requires_independent_proof"),
-                           ("present_accepted", "present_accepted"), ("gpu_complete", "gpu_complete"),
+                           ("present_accepted", "present_accepted"), ("draw_completed", "gpu_complete"),
+                           ("copy_completed", "copy_complete"),
                            ("requests", "requested")):
             if self.counts[key]:
                 return label
@@ -119,6 +131,7 @@ def read_records(stream, stats):
     """Never buffer a whole overlong line or parse a partial final record at the byte cap."""
     remaining = MAX_BYTES
     dropping = False
+    ended = True
     while remaining:
         chunk = stream.readline(min(MAX_LINE + 2, remaining))
         remaining -= len(chunk)
@@ -131,10 +144,12 @@ def read_records(stream, stats):
         elif len(line) > MAX_LINE:
             stats["overlong"] += 1
             dropping = not ended
-        elif ended or remaining:
+        elif ended:
             yield line
-    # Conservative when the input length is exactly the cap; do not read one more byte to probe.
-    stats["truncated"] = remaining == 0
+    # At EOF (including the scan boundary), never promote an uncommitted record.
+    stats["unterminated"] = int(not ended)
+    # Conservative at exactly the cap; do not read one more byte to probe.
+    stats["truncated"] = remaining == 0 or not ended
 
 
 def summarize(stream, pid, single_process=False):
@@ -171,7 +186,8 @@ def summarize(stream, pid, single_process=False):
     obs = legacy if legacy is not None and not mixed else explicit
     if mixed:
         obs.counts["inconsistent"] += 1
-    return dict(pid=pid, status=obs.status(), **obs.counts, **stats, mixed_pid=bool(mixed))
+    return dict(pid=pid, status=obs.status(), gpu_complete=obs.counts["draw_completed"],
+                **obs.counts, **stats, mixed_pid=bool(mixed))
 
 
 def main(argv=None):
