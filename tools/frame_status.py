@@ -9,7 +9,11 @@ from contextlib import nullcontext
 MAX_BYTES = 4 * 1024 * 1024
 MAX_LINE = 4096
 MAX_PRESENTERS = 256
+MAX_QUEUE_STREAMS = 256
 UINT32 = (1 << 32) - 1
+UINT64 = (1 << 64) - 1
+QUEUE_EVENTS = (b"QUEUE_CALL", b"QUEUE_RETURN")
+ACCEPTED_RESULTS = (0, 1000001003)  # VK_SUCCESS / VK_SUBOPTIMAL_KHR
 SCHEMAS = {
     b"WINDOW": (b"title", b"visible"),
     b"ACTIVE": (b"id", b"capture"),
@@ -17,6 +21,8 @@ SCHEMAS = {
     b"REQUEST": (b"id", b"n", b"mode"),
     b"PRESENT": (b"id", b"n", b"image", b"mode", b"draw_target", b"copy_done", b"raw",
                  b"pixels", b"diff", b"postdraw", b"varied"),
+    b"QUEUE_CALL": (b"source", b"id", b"n", b"image"),
+    b"QUEUE_RETURN": (b"source", b"id", b"n", b"image", b"raw"),
 }
 FLAGS = {b"visible", b"capture", b"draw_target", b"copy_done", b"submitted", b"done"}
 LIMITS = {b"id": (1, UINT32), b"n": (1, UINT32), b"image": (0, UINT32),
@@ -51,7 +57,11 @@ def validated(kind, items):
     if set(items) != required:
         raise ValueError
     for key, token in items.items():
-        if key in FLAGS:
+        if kind in QUEUE_EVENTS and key in (b"id", b"n"):
+            items[key] = number(token, 1, UINT64)
+        elif key == b"source" and token not in (b"presenter", b"dxgi"):
+            raise ValueError
+        elif key in FLAGS:
             items[key] = number(token, 0, 1)
         elif key in LIMITS:
             items[key] = number(token, *LIMITS[key])
@@ -64,11 +74,47 @@ class Observations:
     def __init__(self):
         self.seen = self.window = False
         self.presenters = {}
+        # PID has already been checked. Native calls are serialized within a (source, id) pair.
+        # Keep its last sequence and pending image (None once retired), not a list of all calls.
+        self.queues = {}
         self.counts = dict(requests=0, draw_completed=0, copy_completed=0, present_accepted=0, candidates=0,
-                           inconsistent=0, sequence_gaps=0, presenter_overflow=0)
+                           inconsistent=0, sequence_gaps=0, presenter_overflow=0, queue_calls=0,
+                           queue_returns=0, queue_accepted=0, queue_failed=0, queue_unmatched_returns=0,
+                           queue_overflow=0)
+
+    def record_queue(self, kind, f):
+        key = (f[b"source"], f[b"id"])
+        n, image = f[b"n"], f[b"image"]
+        last, pending = self.queues.get(key, (0, None))
+        if kind == b"QUEUE_CALL":
+            if not last and len(self.queues) >= MAX_QUEUE_STREAMS:
+                self.counts["queue_overflow"] += 1
+                return
+            if n <= last:
+                self.counts["inconsistent"] += 1
+                return
+            if n != last + 1:
+                self.counts["sequence_gaps"] += 1
+            if pending is not None:
+                # The intervening return was not observed. A later return must not match that old call.
+                self.counts["inconsistent"] += 1
+            self.queues[key] = (n, image)
+            self.counts["queue_calls"] += 1
+            return
+        if n != last or image != pending:
+            # Includes orphan and duplicate returns. Neither creates a new stream.
+            self.counts["queue_unmatched_returns"] += 1
+            self.counts["inconsistent"] += 1
+            return
+        self.queues[key] = (n, None)
+        self.counts["queue_returns"] += 1
+        self.counts["queue_accepted" if f[b"raw"] in ACCEPTED_RESULTS else "queue_failed"] += 1
 
     def record(self, kind, f):
         self.seen = True
+        if kind in QUEUE_EVENTS:
+            self.record_queue(kind, f)
+            return
         if kind == b"WINDOW":
             self.window = f[b"title"] == b"sgaWindowClass" and f[b"visible"] == 1
             return
@@ -105,7 +151,7 @@ class Observations:
             self.counts["requests"] += 1
             return
         done = f[b"copy_done"] == 1
-        accepted = f[b"raw"] in (0, 1000001003)  # VK_SUCCESS / VK_SUBOPTIMAL_KHR
+        accepted = f[b"raw"] in ACCEPTED_RESULTS
         self.counts["copy_completed"] += int(done)
         self.counts["present_accepted"] += int(accepted)
         pixels, diff, post, varied = (f[k] for k in (b"pixels", b"diff", b"postdraw", b"varied"))
@@ -119,8 +165,9 @@ class Observations:
 
     def status(self):
         for key, label in (("candidates", "candidate_requires_independent_proof"),
-                           ("present_accepted", "present_accepted"), ("draw_completed", "gpu_complete"),
-                           ("copy_completed", "copy_complete"),
+                           ("present_accepted", "present_accepted"), ("queue_accepted", "queue_accepted"),
+                           ("draw_completed", "gpu_complete"), ("copy_completed", "copy_complete"),
+                           ("queue_failed", "queue_failed"), ("queue_calls", "queue_called"),
                            ("requests", "requested")):
             if self.counts[key]:
                 return label
@@ -170,6 +217,8 @@ def summarize(stream, pid, single_process=False):
             if tagged and number(items.pop(b"pid"), 1, UINT32) != pid:
                 foreign = True
                 continue
+            if kind in QUEUE_EVENTS and not tagged:
+                continue  # Both records are explicitly PID-tagged by the native producer.
             if not tagged and not (legacy and anchored and not foreign and kind != b"WINDOW"):
                 continue
             f = validated(kind, items)
@@ -187,6 +236,7 @@ def summarize(stream, pid, single_process=False):
     if mixed:
         obs.counts["inconsistent"] += 1
     return dict(pid=pid, status=obs.status(), gpu_complete=obs.counts["draw_completed"],
+                queue_unreturned=obs.counts["queue_calls"] - obs.counts["queue_returns"],
                 **obs.counts, **stats, mixed_pid=bool(mixed))
 
 
